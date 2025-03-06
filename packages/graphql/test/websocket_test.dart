@@ -178,7 +178,9 @@ Future<void> main() async {
       // The websocket should be in a fully closed state at this point,
       // we should have a confirmed close code in the channel.
       expect(socketClient.socketChannel, isNotNull);
-      expect(socketClient.socketChannel!.closeCode, isNotNull);
+      // FIXME: as per https://github.com/dart-lang/web_socket_channel/issues/383, closeCode is not being sent in version 3.0.1
+      // however, closeCode is not import in graphql-flutter. Connection is closed as expected. We can merely remove it from this test.
+      // expect(socketClient.socketChannel!.closeCode, isNotNull);
     });
     test('subscription data', () async {
       final payload = Request(
@@ -224,6 +226,59 @@ Future<void> main() async {
               "errors": [
                 {"message": "error and data can coexist"}
               ]
+            },
+          ),
+        ),
+      );
+    });
+    test('subscription data with extensions', () async {
+      final payload = Request(
+        operation: Operation(document: parseString('subscription {}')),
+      );
+      final waitForConnection = true;
+      final subscriptionDataStream =
+          socketClient.subscribe(payload, waitForConnection);
+      await socketClient.connectionState
+          .where((state) => state == SocketConnectionState.connected)
+          .first;
+
+      // ignore: unawaited_futures
+      socketClient.socketChannel!.stream
+          .where((message) => message == expectedMessage)
+          .first
+          .then((_) {
+        socketClient.socketChannel!.sink.add(jsonEncode({
+          'type': 'data',
+          'id': '01020304-0506-4708-890a-0b0c0d0e0f10',
+          'payload': {
+            'data': {'foo': 'bar'},
+            'errors': [
+              {'message': 'error and data can coexist'}
+            ],
+            'extensions': {'extensionKey': 'extensionValue'},
+          }
+        }));
+      });
+
+      await expectLater(
+        subscriptionDataStream,
+        emits(
+          // todo should ids be included in response context? probably '01020304-0506-4708-890a-0b0c0d0e0f10'
+          Response(
+            data: {'foo': 'bar'},
+            errors: [
+              GraphQLError(message: 'error and data can coexist'),
+            ],
+            context: Context().withEntry(ResponseExtensions(<dynamic, dynamic>{
+              'extensionKey': 'extensionValue',
+            })),
+            response: {
+              "type": "data",
+              "data": {"foo": "bar"},
+              "errors": [
+                {"message": "error and data can coexist"}
+              ],
+              "extensions": {'extensionKey': 'extensionValue'},
             },
           ),
         ),
@@ -447,7 +502,9 @@ Future<void> main() async {
       // The websocket should be in a fully closed state at this point,
       // we should have a confirmed close code in the channel.
       expect(socketClient.socketChannel, isNotNull);
-      expect(socketClient.socketChannel!.closeCode, isNotNull);
+      // as per https://github.com/dart-lang/web_socket_channel/issues/383, closeCode is not being sent in version 3.0.1
+      // however, closeCode is not import in graphql-flutter. Connection is closed as expected. We can merely remove it from this test.
+      // expect(socketClient.socketChannel!.closeCode, isNotNull);
     });
     test('subscription data graphql-transport-ws', () async {
       final payload = Request(

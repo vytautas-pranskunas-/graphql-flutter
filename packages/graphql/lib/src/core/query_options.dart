@@ -27,6 +27,7 @@ class QueryOptions<TParsed extends Object?> extends BaseOptions<TParsed> {
     this.pollInterval,
     Context? context,
     ResultParserFn<TParsed>? parserFn,
+    Duration? queryRequestTimeout,
     this.onComplete,
     this.onError,
   }) : super(
@@ -39,6 +40,7 @@ class QueryOptions<TParsed extends Object?> extends BaseOptions<TParsed> {
           context: context,
           optimisticResult: optimisticResult,
           parserFn: parserFn,
+          queryRequestTimeout: queryRequestTimeout,
         );
 
   final OnQueryComplete? onComplete;
@@ -55,6 +57,39 @@ class QueryOptions<TParsed extends Object?> extends BaseOptions<TParsed> {
         onError,
       ];
 
+  /// Generic copyWith for all fields. There are other, more specific options:
+  /// - [copyWithPolicies] and [withFetchMoreOptions]
+  QueryOptions<TParsed> copyWithOptions({
+    DocumentNode? document,
+    String? operationName,
+    Map<String, dynamic>? variables,
+    FetchPolicy? fetchPolicy,
+    ErrorPolicy? errorPolicy,
+    CacheRereadPolicy? cacheRereadPolicy,
+    Object? optimisticResult,
+    Duration? pollInterval,
+    Context? context,
+    ResultParserFn<TParsed>? parserFn,
+    Duration? queryRequestTimeout,
+    OnQueryComplete? onComplete,
+    OnQueryError? onError,
+  }) =>
+      QueryOptions<TParsed>(
+        document: document ?? this.document,
+        operationName: operationName ?? this.operationName,
+        variables: variables ?? this.variables,
+        fetchPolicy: fetchPolicy ?? this.fetchPolicy,
+        errorPolicy: errorPolicy ?? this.errorPolicy,
+        cacheRereadPolicy: cacheRereadPolicy ?? this.cacheRereadPolicy,
+        optimisticResult: optimisticResult ?? this.optimisticResult,
+        pollInterval: pollInterval ?? this.pollInterval,
+        context: context ?? this.context,
+        parserFn: parserFn ?? this.parserFn,
+        queryRequestTimeout: queryRequestTimeout ?? this.queryRequestTimeout,
+        onComplete: onComplete ?? this.onComplete,
+        onError: onError ?? this.onError,
+      );
+
   QueryOptions<TParsed> withFetchMoreOptions(
     FetchMoreOptions fetchMoreOptions,
   ) =>
@@ -64,6 +99,7 @@ class QueryOptions<TParsed extends Object?> extends BaseOptions<TParsed> {
         fetchPolicy: FetchPolicy.noCache,
         errorPolicy: errorPolicy,
         parserFn: parserFn,
+        queryRequestTimeout: queryRequestTimeout,
         context: context,
         variables: {
           ...variables,
@@ -84,6 +120,7 @@ class QueryOptions<TParsed extends Object?> extends BaseOptions<TParsed> {
         context: context,
         optimisticResult: optimisticResult,
         parserFn: parserFn,
+        queryRequestTimeout: queryRequestTimeout,
       );
 
   QueryOptions<TParsed> copyWithPolicies(Policies policies) => QueryOptions(
@@ -97,6 +134,7 @@ class QueryOptions<TParsed extends Object?> extends BaseOptions<TParsed> {
         pollInterval: pollInterval,
         context: context,
         parserFn: parserFn,
+        queryRequestTimeout: queryRequestTimeout,
       );
 }
 
@@ -113,6 +151,7 @@ class SubscriptionOptions<TParsed extends Object?>
     Object? optimisticResult,
     Context? context,
     ResultParserFn<TParsed>? parserFn,
+    Duration? queryRequestTimeout,
   }) : super(
           fetchPolicy: fetchPolicy,
           errorPolicy: errorPolicy,
@@ -123,6 +162,7 @@ class SubscriptionOptions<TParsed extends Object?>
           context: context,
           optimisticResult: optimisticResult,
           parserFn: parserFn,
+          queryRequestTimeout: queryRequestTimeout,
         );
   SubscriptionOptions<TParsed> copyWithPolicies(Policies policies) =>
       SubscriptionOptions(
@@ -135,6 +175,7 @@ class SubscriptionOptions<TParsed extends Object?>
         optimisticResult: optimisticResult,
         context: context,
         parserFn: parserFn,
+        queryRequestTimeout: queryRequestTimeout,
       );
 }
 
@@ -154,6 +195,7 @@ class WatchQueryOptions<TParsed extends Object?> extends QueryOptions<TParsed> {
     bool? eagerlyFetchResults,
     Context? context,
     ResultParserFn<TParsed>? parserFn,
+    Duration? queryRequestTimeout,
   })  : eagerlyFetchResults = eagerlyFetchResults ?? fetchResults,
         super(
           document: document,
@@ -166,12 +208,16 @@ class WatchQueryOptions<TParsed extends Object?> extends QueryOptions<TParsed> {
           context: context,
           optimisticResult: optimisticResult,
           parserFn: parserFn,
+          queryRequestTimeout: queryRequestTimeout,
         );
 
-  /// Whether or not to fetch results
+  /// Whether or not to fetch results every time a new listener is added.
+  /// If [eagerlyFetchResults] is `true`, fetch is triggered during instantiation.
   final bool fetchResults;
 
-  /// Whether to [fetchResults] immediately on instantiation.
+  /// Whether to [fetchResults] immediately on instantiation of [ObservableQuery].
+  /// If available, cache results are emitted when the first listener is added.
+  /// Network results are then emitted when they return to any attached listeners.
   /// Defaults to [fetchResults].
   final bool eagerlyFetchResults;
 
@@ -186,6 +232,42 @@ class WatchQueryOptions<TParsed extends Object?> extends QueryOptions<TParsed> {
         eagerlyFetchResults,
         carryForwardDataOnException,
       ];
+
+  /// Generic copyWith for all fields. There are other, more specific options:
+  /// - [copyWithFetchPolicy], [copyWithVariables], etc
+  WatchQueryOptions<TParsed> copyWith({
+    DocumentNode? document,
+    String? operationName,
+    Map<String, dynamic>? variables,
+    FetchPolicy? fetchPolicy,
+    ErrorPolicy? errorPolicy,
+    CacheRereadPolicy? cacheRereadPolicy,
+    Object? optimisticResult,
+    Duration? pollInterval,
+    bool? fetchResults,
+    bool? carryForwardDataOnException,
+    bool? eagerlyFetchResults,
+    Context? context,
+    ResultParserFn<TParsed>? parserFn,
+    Duration? queryRequestTimeout,
+  }) =>
+      WatchQueryOptions<TParsed>(
+        document: document ?? this.document,
+        operationName: operationName ?? this.operationName,
+        variables: variables ?? this.variables,
+        fetchPolicy: fetchPolicy ?? this.fetchPolicy,
+        errorPolicy: errorPolicy ?? this.errorPolicy,
+        cacheRereadPolicy: cacheRereadPolicy ?? this.cacheRereadPolicy,
+        optimisticResult: optimisticResult ?? this.optimisticResult,
+        pollInterval: pollInterval ?? this.pollInterval,
+        fetchResults: fetchResults ?? this.fetchResults,
+        eagerlyFetchResults: eagerlyFetchResults ?? this.eagerlyFetchResults,
+        carryForwardDataOnException:
+            carryForwardDataOnException ?? this.carryForwardDataOnException,
+        context: context ?? this.context,
+        parserFn: parserFn ?? this.parserFn,
+        queryRequestTimeout: queryRequestTimeout ?? this.queryRequestTimeout,
+      );
 
   WatchQueryOptions<TParsed> copyWithFetchPolicy(
     FetchPolicy? fetchPolicy,
@@ -204,6 +286,7 @@ class WatchQueryOptions<TParsed extends Object?> extends QueryOptions<TParsed> {
         carryForwardDataOnException: carryForwardDataOnException,
         context: context,
         parserFn: parserFn,
+        queryRequestTimeout: queryRequestTimeout,
       );
   WatchQueryOptions<TParsed> copyWithPolicies(
     Policies policies,
@@ -222,6 +305,7 @@ class WatchQueryOptions<TParsed extends Object?> extends QueryOptions<TParsed> {
         carryForwardDataOnException: carryForwardDataOnException,
         context: context,
         parserFn: parserFn,
+        queryRequestTimeout: queryRequestTimeout,
       );
 
   WatchQueryOptions<TParsed> copyWithPollInterval(Duration? pollInterval) =>
@@ -239,6 +323,7 @@ class WatchQueryOptions<TParsed extends Object?> extends QueryOptions<TParsed> {
         carryForwardDataOnException: carryForwardDataOnException,
         context: context,
         parserFn: parserFn,
+        queryRequestTimeout: queryRequestTimeout,
       );
 
   WatchQueryOptions<TParsed> copyWithVariables(
@@ -257,6 +342,7 @@ class WatchQueryOptions<TParsed extends Object?> extends QueryOptions<TParsed> {
         carryForwardDataOnException: carryForwardDataOnException,
         context: context,
         parserFn: parserFn,
+        queryRequestTimeout: queryRequestTimeout,
       );
 
   WatchQueryOptions<TParsed> copyWithOptimisticResult(
@@ -275,6 +361,7 @@ class WatchQueryOptions<TParsed extends Object?> extends QueryOptions<TParsed> {
         carryForwardDataOnException: carryForwardDataOnException,
         context: context,
         parserFn: parserFn,
+        queryRequestTimeout: queryRequestTimeout,
       );
 }
 
@@ -290,6 +377,7 @@ class FetchMoreOptions {
     this.document,
     this.variables = const {},
     required this.updateQuery,
+    Duration? queryRequestTimeout,
   });
 
   /// Automatically merge the results of [updateQuery] into `previousResultData`.
@@ -301,11 +389,13 @@ class FetchMoreOptions {
     DocumentNode? document,
     Map<String, dynamic> variables = const {},
     required UpdateQuery updateQuery,
+    Duration? queryRequestTimeout,
   }) =>
       FetchMoreOptions(
         document: document,
         variables: variables,
         updateQuery: partialUpdater(updateQuery),
+        queryRequestTimeout: queryRequestTimeout,
       );
 
   final DocumentNode? document;

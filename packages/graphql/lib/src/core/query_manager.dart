@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:graphql/src/utilities/helpers.dart';
 import 'package:graphql/src/utilities/response.dart';
 import 'package:meta/meta.dart';
 import 'package:collection/collection.dart';
@@ -19,18 +20,30 @@ import 'package:graphql/src/scheduler/scheduler.dart';
 
 import 'package:graphql/src/core/_query_write_handling.dart';
 
-bool Function(dynamic a, dynamic b) _deepEquals =
-    const DeepCollectionEquality().equals;
+typedef DeepEqualsFn = bool Function(dynamic a, dynamic b);
+
+/// The equality function used for comparing cached and new data.
+///
+/// You can alternatively provide [optimizedDeepEquals] for a faster
+/// equality check. Or provide your own via [GqlClient] constructor.
+DeepEqualsFn gqlDeepEquals = const DeepCollectionEquality().equals;
 
 class QueryManager {
   QueryManager({
     required this.link,
     required this.cache,
     this.alwaysRebroadcast = false,
+    DeepEqualsFn? deepEquals,
+    bool deduplicatePollers = false,
+    this.requestTimeout = const Duration(seconds: 5),
   }) {
     scheduler = QueryScheduler(
       queryManager: this,
+      deduplicatePollers: deduplicatePollers,
     );
+    if (deepEquals != null) {
+      gqlDeepEquals = deepEquals;
+    }
   }
 
   final Link link;
@@ -38,6 +51,9 @@ class QueryManager {
 
   /// Whether to skip deep equality checks in [maybeRebroadcastQueries]
   final bool alwaysRebroadcast;
+
+  /// The timeout for resolving a query
+  final Duration? requestTimeout;
 
   QueryScheduler? scheduler;
   static final _oneOffOpId = '0';
@@ -244,7 +260,16 @@ class QueryManager {
 
     try {
       // execute the request through the provided link(s)
-      response = await link.request(request).first;
+      Stream<Response> responseStream = link.request(request);
+
+      // Resolve the request timeout by first checking the options of this specific request,
+      // then the manager level requestTimeout.
+      // Only apply the timeout if it is non-null.
+      final timeout = options.queryRequestTimeout ?? this.requestTimeout;
+      if (timeout case final Duration timeout) {
+        responseStream = responseStream.timeout(timeout);
+      }
+      response = await responseStream.first;
 
       queryResult = mapFetchResultToQueryResult(
         response,
@@ -310,14 +335,26 @@ class QueryManager {
       // we attempt to resolve the from the cache
       if (shouldRespondEagerlyFromCache(options.fetchPolicy) &&
           !queryResult.isOptimistic) {
-        final data = cache.readQuery(request, optimistic: false);
-        // we only push an eager query with data
-        if (data != null) {
-          queryResult = QueryResult(
-            options: options,
-            data: data,
+        final latestResult = _getQueryResultByRequest<TParsed>(request);
+        if (latestResult != null && latestResult.data != null) {
+          // we have a result already cached + deserialized for this request
+          // so we reuse it.
+          // latest result won't be for loading, it must contain data
+          queryResult = latestResult.copyWith(
             source: QueryResultSource.cache,
           );
+        } else {
+          // otherwise, we try to find the query in cache (which will require
+          // deserialization)
+          final data = cache.readQuery(request, optimistic: false);
+          // we only push an eager query with data
+          if (data != null) {
+            queryResult = QueryResult(
+              options: options,
+              data: data,
+              source: QueryResultSource.cache,
+            );
+          }
         }
 
         if (options.fetchPolicy == FetchPolicy.cacheOnly &&
@@ -357,6 +394,18 @@ class QueryManager {
     return queryResult;
   }
 
+  /// If a request already has a result associated with it in cache (as
+  /// determined by [ObservableQuery.latestResult]), we can return it without
+  /// needing to denormalize + parse again.
+  QueryResult<TParsed>? _getQueryResultByRequest<TParsed>(Request request) {
+    for (final query in queries.values) {
+      if (query.options.asRequest == request) {
+        return query.latestResult as QueryResult<TParsed>?;
+      }
+    }
+    return null;
+  }
+
   /// Refetch the [ObservableQuery] referenced by [queryId],
   /// overriding any present non-network-only [FetchPolicy].
   Future<QueryResult<TParsed>?> refetchQuery<TParsed>(String queryId) {
@@ -382,11 +431,11 @@ class QueryManager {
     return results;
   }
 
-  ObservableQuery<TParsed>? getQuery<TParsed>(String? queryId) {
-    if (!queries.containsKey(queryId)) {
+  ObservableQuery<TParsed>? getQuery<TParsed>(final String? queryId) {
+    if (!queries.containsKey(queryId) || queryId == null) {
       return null;
     }
-    final query = queries[queryId!];
+    final query = queries[queryId];
     if (query is ObservableQuery<TParsed>) {
       return query;
     }
@@ -401,16 +450,17 @@ class QueryManager {
   void addQueryResult<TParsed>(
     Request request,
     String? queryId,
-    QueryResult<TParsed> queryResult,
-  ) {
+    QueryResult<TParsed> queryResult, {
+    bool fromRebroadcast = false,
+  }) {
     final observableQuery = getQuery<TParsed>(queryId);
 
     if (observableQuery != null && !observableQuery.controller.isClosed) {
-      observableQuery.addResult(queryResult);
+      observableQuery.addResult(queryResult, fromRebroadcast: fromRebroadcast);
     }
   }
 
-  /// Create an optimstic result for the query specified by `queryId`, if it exists
+  /// Create an optimistic result for the query specified by `queryId`, if it exists
   QueryResult<TParsed> _getOptimisticQueryResult<TParsed>(
     Request request, {
     required String queryId,
@@ -462,27 +512,55 @@ class QueryManager {
       return false;
     }
 
-    final shouldBroadast = cache.shouldBroadcast(claimExecution: true);
+    final shouldBroadcast = cache.shouldBroadcast(claimExecution: true);
 
-    if (!shouldBroadast && !force) {
+    if (!shouldBroadcast && !force) {
       return false;
     }
 
-    for (var query in queries.values) {
-      if (query != exclude && query.isRebroadcastSafe) {
+    // If two ObservableQueries are backed by the same [Request], we only need
+    // to [readQuery] for it once.
+    final Map<Request, QueryResult<Object?>> diffQueryResultCache = {};
+    final Map<Request, bool> ignoreQueryResults = {};
+    for (final query in queries.values) {
+      final Request request = query.options.asRequest;
+      final cachedQueryResult = diffQueryResultCache[request];
+      if (query == exclude || !query.isRebroadcastSafe) {
+        continue;
+      }
+      if (cachedQueryResult != null) {
+        // We've already done the diff and denormalized, emit to the observable
+        addQueryResult(
+          request,
+          query.queryId,
+          cachedQueryResult,
+          fromRebroadcast: true,
+        );
+      } else if (ignoreQueryResults.containsKey(request)) {
+        // We've already seen this one and don't need to notify
+        continue;
+      } else {
+        // We haven't seen this one yet, denormalize from cache and diff
         final cachedData = cache.readQuery(
           query.options.asRequest,
           optimistic: query.options.policies.mergeOptimisticData,
         );
         if (_cachedDataHasChangedFor(query, cachedData)) {
-          query.addResult(
-            mapFetchResultToQueryResult(
-              Response(data: cachedData, response: {}),
-              query.options,
-              source: QueryResultSource.cache,
-            ),
+          // The data has changed
+          final queryResult = QueryResult(
+            data: cachedData,
+            options: query.options,
+            source: QueryResultSource.cache,
+          );
+          diffQueryResultCache[request] = queryResult;
+          addQueryResult(
+            request,
+            query.queryId,
+            queryResult,
             fromRebroadcast: true,
           );
+        } else {
+          ignoreQueryResults[request] = true;
         }
       }
     }
@@ -495,7 +573,8 @@ class QueryManager {
   ) =>
       cachedData != null &&
       query.latestResult != null &&
-      (alwaysRebroadcast || !_deepEquals(query.latestResult!.data, cachedData));
+      (alwaysRebroadcast ||
+          !gqlDeepEquals(query.latestResult!.data, cachedData));
 
   void setQuery(ObservableQuery<Object?> observableQuery) {
     queries[observableQuery.queryId] = observableQuery;

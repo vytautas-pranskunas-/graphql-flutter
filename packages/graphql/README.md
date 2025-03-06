@@ -128,7 +128,7 @@ which requires a few changes to the above:
 > **NB**: This is different in `graphql_flutter`, which provides `await initHiveForFlutter()` for initialization in `main`
 
 ```dart
-GraphQL getClient() async {
+GraphQLClient getClient() async {
   ...
   /// initialize Hive and wrap the default box in a HiveStore
   final store = await HiveStore.open(path: 'my/cache/path');
@@ -1047,3 +1047,4 @@ HttpLink httpLink = HttpLink('https://api.url/graphql', defaultHeaders: {
 [local state management]: https://www.apollographql.com/docs/tutorial/local-state/#update-local-data
 [`typepolicies`]: https://www.apollographql.com/docs/react/caching/cache-configuration/#the-typepolicy-type
 [direct cache access]: https://www.apollographql.com/docs/react/caching/cache-interaction/
+
